@@ -1,0 +1,147 @@
+import pandas as pd
+import numpy as np
+import itertools
+import seaborn as sns
+import statsmodels.api as sm
+from sklearn.metrics import mean_squared_error
+import matplotlib.pylab as plt
+%matplotlib inline
+import warnings
+warnings.filterwarnings('ignore')
+
+data = pd.read_csv('train_csv.csv')
+print(data.head())
+print('\n Data Types:')
+print(data.dtypes)
+
+data= data.drop('id', axis=1)
+data.head()
+
+from datetime import datetime
+con=data['time']
+data['time']=pd.to_datetime(data['time'])
+data.set_index('time', inplace=True)
+data.index
+
+ts = data['feature']
+ts.head(10)
+
+plt.plot(ts)
+
+newdata = data.diff(periods=1)
+newdata.dropna(inplace=True)
+newdata.head()
+
+plt.plot(newdata)
+
+from statsmodels.tsa.seasonal import seasonal_decompose
+season = seasonal_decompose(newdata, freq=2)
+fig = season.plot();
+fig.set_size_inches(18,8)
+
+from pylab import rcParams
+rcParams['figure.figsize'] = 18, 8
+decomposition = sm.tsa.seasonal_decompose(newdata, model='additive',freq=2)
+fig = decomposition.plot()
+plt.show()
+
+#Performing Dickey_Fuller Test
+from statsmodels.tsa.stattools import adfuller
+print("Result of Dickey-Fuller Test : ")
+dftest = adfuller(newdata['feature'], autolag='AIC')
+dfoutput = pd.Series(dftest[0:4], index=['Test Statistic','p-value','#Lags Used','Number of Observations Used'])
+for key, value in dftest[4].items():
+    dfoutput['Critical Value (%s)'%key]=value
+print(dfoutput)
+
+#Autocorrelation Plot
+from pandas.plotting import autocorrelation_plot
+autocorrelation_plot(data['feature'])
+plt.show()
+
+from statsmodels.tsa.stattools import acf,pacf
+lag_acf = acf(newdata, nlags=20)
+lag_pacf= pacf(newdata, nlags=20, method='ols')
+
+#plot ACF:-
+plt.subplot(121)
+plt.plot(lag_acf)
+plt.axhline(y=0,linestyle='--', color='gray')
+plt.axhline(y=-1.96/np.sqrt(len(datasetLogDiffShifting)), linestyle='--', color='gray')
+plt.axhline(y=1.96/np.sqrt(len(datasetLogDiffShifting)), linestyle='--', color='gray')
+plt.title('Autocorrelation Function')
+
+#plot PACF
+plt.subplot(122)
+plt.plot(lag_pacf)
+plt.axhline(y=0,linestyle='--', color='gray')
+plt.axhline(y=-1.96/np.sqrt(len(datasetLogDiffShifting)), linestyle='--', color='gray')
+plt.axhline(y=1.96/np.sqrt(len(datasetLogDiffShifting)), linestyle='--', color='gray')
+plt.title('Partial Autocorrelation Function')
+plt.tight_layout()
+
+p = d = q = range(0, 2)
+pdq = list(itertools.product(p, d, q))
+seasonal_pdq = [(x[0], x[1], x[2], 12) for x in list(itertools.product(p, d, q))]
+
+print('Examples of parameter combinations for Seasonal ARIMA...')
+print('SARIMAX: {} x {}'.format(pdq[1], seasonal_pdq[1]))
+print('SARIMAX: {} x {}'.format(pdq[1], seasonal_pdq[2]))
+print('SARIMAX: {} x {}'.format(pdq[2], seasonal_pdq[3]))
+print('SARIMAX: {} x {}'.format(pdq[2], seasonal_pdq[4]))
+
+#SARIMAX
+for param in pdq:
+    for param_seasonal in seasonal_pdq:
+        try:
+            mod = sm.tsa.statespace.SARIMAX(data['feature'],
+                                            order=param,
+                                            seasonal_order=param_seasonal,
+                                            enforce_stationarity=False,
+                                            enforce_invertibility=False)
+
+            results = mod.fit()
+
+            print('ARIMA{}x{}12 - AIC:{}'.format(param, param_seasonal, results.aic))
+        except:
+            continue
+mod = sm.tsa.statespace.SARIMAX(data['feature'],
+                                order=(1, 1, 1),
+                                seasonal_order=(0, 1, 1, 12),
+                                enforce_stationarity=False,
+                                enforce_invertibility=False)
+results = mod.fit()
+print(results.summary().tables[1])
+
+results.plot_diagnostics(figsize=(16, 8))
+plt.show()
+
+pred = results.get_prediction(start=pd.to_datetime('2019-03-19 00:10:00'), dynamic=False)
+pred_ci = pred.conf_int()
+ax = data['feature'].plot(label='observed')
+pred.predicted_mean.plot(ax=ax, label='Forecasting for one step', alpha=.7, figsize=(14, 7))
+ax.fill_between(pred_ci.index,
+                pred_ci.iloc[:, 0],
+                pred_ci.iloc[:, 1], color='k', alpha=.2)
+ax.set_xlabel('time')
+ax.set_ylabel('Feature')
+plt.legend()
+plt.show()
+
+y_forecasted = pred.predicted_mean
+y_truth = data['feature']['2019-03-19 00:10:00':]
+mse = ((y_forecasted - y_truth) ** 2).mean()
+print('The Mean Squared Error of our forecasts is {}'.format(round(mse, 2))) #The Mean Squared Error of our forecasts is 10686.49
+print('The Root Mean Squared Error of our forecasts is {}'.format(round(np.sqrt(mse), 2))) #The Root Mean Squared Error of our forecasts is 103.38
+
+pred_uc = results.get_forecast(steps=40)
+testfeature = pd.DataFrame(pred_uc.predicted_mean)
+testfeature = testfeature.reset_index(drop=True)
+testfeature
+
+test=pd.read_csv('test_csv.csv')
+test.head()
+
+test['time']= pd.to_datetime(test['time']) 
+testfinal = pd.concat([test, testfeature], axis=1)
+testfinal
